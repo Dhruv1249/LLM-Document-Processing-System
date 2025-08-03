@@ -3,3 +3,4 @@
 .gradio/
 venv/
 .env
+rag_outputs/
