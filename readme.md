@@ -31,7 +31,7 @@ The system follows a Retrieval-Augmented Generation (RAG) pipeline which has two
 ## 📂 Project Structure
 
 Here's an overview of the key files and directories in this project:
-
+```bash
 .
 ├── main.py           # The core Streamlit application script
 ├── requirements.txt  # List of Python dependencies
@@ -39,7 +39,7 @@ Here's an overview of the key files and directories in this project:
 ├── env.example       # Template for the .env file
 ├── rag_outputs/      # Directory where logs and results are saved
 └── README.md         # You are here!
-
+```
 
 ---
 
@@ -56,19 +56,21 @@ Before you begin, you need a Google API Key with access to the Gemini models.
 3.  Click "**Create API key**".
 4.  Copy the generated key. You will need it in a later step.
 
-### Step 2: Clone the Repository
+#### Step 2: Clone the Repository
 
 Open your terminal or command prompt and run the following command to clone the project to your local machine:
 
 ```bash
 git clone [https://github.com/your-username/llm-document-processing-system.git](https://github.com/your-username/llm-document-processing-system.git)
 cd llm-document-processing-system
-Step 3: Set Up a Virtual Environment
+```
+### Step 3: Set Up a Virtual Environment
 It's a best practice to use a virtual environment to manage project dependencies and avoid conflicts with other Python projects.
 
-Bash
+
 
 # Create the virtual environment
+```Bash
 python -m venv venv
 
 # Activate it
@@ -80,26 +82,29 @@ source venv/bin/activate
 
 # On Windows (PowerShell):
 .\venv\Scripts\Activate.ps1
+```
 You'll know it's active when you see (venv) at the beginning of your terminal prompt.
 
-Step 4: Install Dependencies
+## Step 4: Install Dependencies
 The requirements.txt file lists all the Python packages this project needs. Install them using pip:
 
-Bash
+```Bash
 
 pip install -r requirements.txt
-Step 5: Configure Your API Key
+```
+### Step 5: Configure Your API Key
 Your API key should be kept secret. We'll use an .env file to store it securely.
 
 First, create a copy of the example file and name it .env:
 
-Bash
+```Bash
 
 # On macOS/Linux:
 cp env.example .env
 
 # On Windows:
 copy env.example .env
+```
 Next, open the new .env file with a text editor and paste your Google API Key. The file content should look like this:
 
 .env:
@@ -108,15 +113,16 @@ Next, open the new .env file with a text editor and paste your Google API Key. T
 API_KEY="YOUR_GOOGLE_API_KEY_HERE"
 The application will automatically load this key when it starts.
 
-Step 6: Run the Application
+### Step 6: Run the Application
 You're all set! With your virtual environment active and your .env file configured, launch the Streamlit app:
 
-Bash
+```Bash
 
 streamlit run main.py
+```
 Open your web browser and navigate to the local URL provided by Streamlit (usually http://localhost:8501).
 
-📋 Usage Instructions
+## 📋 Usage Instructions
 Upload Documents: In the sidebar, click "Browse files" to upload one or more documents. The system will automatically process and index them, showing a success message when done.
 
 Ask a Question: Type your query into the text box labeled "Enter your query:". Be as specific or as conversational as you like.
@@ -128,6 +134,7 @@ Get Results: The system will perform the RAG pipeline and display the structured
 Sample Query:
 46M, knee surgery in Pune, 3-month old policy
 Sample JSON Response:
+```Bash
 JSON
 
 {
@@ -141,7 +148,8 @@ JSON
     }
   ]
 }
-🤔 Troubleshooting
+```
+### 🤔 Troubleshooting
 Here are solutions to some common issues:
 
 streamlit: command not found: This means your virtual environment is not activated. Run the activation command for your OS (e.g., source venv/bin/activate) from inside the project directory and try again.
