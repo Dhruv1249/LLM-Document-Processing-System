@@ -1,0 +1,8 @@
+streamlit
+python-dotenv
+google-generativeai
+unstructured
+langchain
+sentence-transformers
+numpy
+torch
