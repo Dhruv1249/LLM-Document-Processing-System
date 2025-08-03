@@ -313,7 +313,7 @@ def main():
     if os.path.exists(OUTPUT_DIR):
         files = os.listdir(OUTPUT_DIR)
         if files:
-            st.sidebar.header("📁 Saved Files")
+            st.sidebar.header(" Saved Files")
             for fn in sorted(files, reverse=True)[:5]:
                 st.sidebar.text(fn)
 
