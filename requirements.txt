@@ -8,8 +8,8 @@ numpy
 torch
 google==3.0.0
 google-genai
-"unstructured[pdf]"
-"unstructured[eml]"
-"unstructured[pptx]"
-"unstructured[docx]"
-"unstructured[md]"
+unstructured[pdf]
+unstructured[eml]
+unstructured[pptx]
+unstructured[docx]
+unstructured[md]
