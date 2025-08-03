@@ -108,9 +108,10 @@ copy env.example .env
 Next, open the new .env file with a text editor and paste your Google API Key. The file content should look like this:
 
 .env:
-
+```Bash
 # Replace YOUR_GOOGLE_API_KEY_HERE with your actual key from Step 1
 API_KEY="YOUR_GOOGLE_API_KEY_HERE"
+```
 The application will automatically load this key when it starts.
 
 ### Step 6: Run the Application
@@ -149,7 +150,7 @@ JSON
   ]
 }
 ```
-### 🤔 Troubleshooting
+## 🤔 Troubleshooting
 Here are solutions to some common issues:
 
 streamlit: command not found: This means your virtual environment is not activated. Run the activation command for your OS (e.g., source venv/bin/activate) from inside the project directory and try again.
