@@ -1,9 +1,9 @@
 streamlit
 python-dotenv
-google-generativeai
+google-generativeai==0.8.5
 unstructured
 langchain
 sentence-transformers
 numpy
 torch
-google
+google==3.0.0
