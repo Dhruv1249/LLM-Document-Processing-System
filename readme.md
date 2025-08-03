@@ -61,8 +61,8 @@ Before you begin, you need a Google API Key with access to the Gemini models.
 Open your terminal or command prompt and run the following command to clone the project to your local machine:
 
 ```bash
-git clone [https://github.com/your-username/llm-document-processing-system.git](https://github.com/your-username/llm-document-processing-system.git)
-cd llm-document-processing-system
+git clone git clone https://github.com/Dhruv1249/LLM-Document-Processing-System.git
+cd LLM-Document-Processing-System
 ```
 ### Step 3: Set Up a Virtual Environment
 It's a best practice to use a virtual environment to manage project dependencies and avoid conflicts with other Python projects.
@@ -100,17 +100,17 @@ First, create a copy of the example file and name it .env:
 ```Bash
 
 # On macOS/Linux:
-cp env.example .env
+cp .env.example .env
 
 # On Windows:
-copy env.example .env
+copy .env.example .env
 ```
 Next, open the new .env file with a text editor and paste your Google API Key. The file content should look like this:
 
 .env:
 ```Bash
-# Replace YOUR_GOOGLE_API_KEY_HERE with your actual key from Step 1
-API_KEY="YOUR_GOOGLE_API_KEY_HERE"
+# Create a new file named .env and then put the line below in it and put your gemini api key 
+API_KEY=Your_Gemini_API_Key
 ```
 The application will automatically load this key when it starts.
 
