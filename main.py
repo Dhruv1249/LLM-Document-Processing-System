@@ -46,7 +46,7 @@ MAX_CONTEXT_CHARS = 80000
 MAX_CHUNKS = 30
 
 # Embedding model for semantic search
-embedder = SentenceTransformer('all-MiniLM-L6-v2')
+embedder = SentenceTransformer('all-MiniLM-L6-v2',device='cpu')
 
 def save_to_file(content, filename):
     """Save content to a text file in the output directory."""
