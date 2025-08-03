@@ -7,3 +7,4 @@ sentence-transformers
 numpy
 torch
 google==3.0.0
+google-genai
