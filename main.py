@@ -227,7 +227,7 @@ def perform_rag(query, retriever_data, client):
 • Otherwise, output exactly one JSON object with THREE keys:
   1. decision: a string
   2. amount: a number or "N/A"
-  3. justification: a list of objects, each with:
+  3. justification: a list of objects, each with (NOTE: It should never be empty unless no information found always give justification):
      – source: the source filename
      – clause: the exact snippet from the context
      – reasoning: why that snippet leads to the decision
