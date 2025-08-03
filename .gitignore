@@ -1,3 +1,4 @@
-.qodo
+.qodo/
 .env
-./venv
+.gradio/
+venv/
