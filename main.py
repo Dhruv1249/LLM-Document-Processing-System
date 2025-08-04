@@ -105,6 +105,22 @@ def delete_file(filename):
         st.error(f"Error deleting file {filename}: {e}")
         return False
 
+def get_file_stats(filename):
+    """Get character and token count for a file."""
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        char_count = len(content)
+        # Estimate tokens using word count (rough approximation: 1 token ≈ 0.75 words)
+        word_count = len(content.split())
+        estimated_tokens = int(word_count * 1.33)  # More conservative estimate
+        
+        return char_count, estimated_tokens
+    except Exception as e:
+        return 0, 0
+
 def get_user_files():
     """Get list of user files (excluding context and answer history files)."""
     if not os.path.exists(OUTPUT_DIR):
@@ -116,14 +132,7 @@ def get_user_files():
     return sorted(user_files, reverse=True)
 
 def generate_chunks_filename(uploaded_files):
-    """Generate a descriptive filename for chunks based on uploaded files and session."""
-    # Get session ID (create one if doesn't exist)
-    if 'session_id' not in st.session_state:
-        st.session_state.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    session_id = st.session_state.session_id
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
+    """Generate a clean filename based only on document names."""
     # Clean and combine file names (remove extensions and special characters)
     file_names = []
     for file in uploaded_files:
@@ -132,16 +141,16 @@ def generate_chunks_filename(uploaded_files):
         # Replace special characters with underscores
         clean_name = "".join(c if c.isalnum() else "_" for c in clean_name)
         # Limit length to avoid overly long filenames
-        clean_name = clean_name[:20]
+        clean_name = clean_name[:30]
         file_names.append(clean_name)
     
     # Combine file names (limit total length)
     combined_names = "_".join(file_names)
-    if len(combined_names) > 50:
-        combined_names = combined_names[:50] + "_etc"
+    if len(combined_names) > 80:
+        combined_names = combined_names[:80] + "_etc"
     
-    # Generate final filename
-    filename = f"{combined_names}_{timestamp}_session_{session_id}.txt"
+    # Generate clean filename with just document names
+    filename = f"{combined_names}.txt"
     return filename
 
 # --- Advanced Ingestion and Chunking ---
@@ -161,18 +170,24 @@ def process_documents(uploaded_files):
         is_separator_regex=False,
     )
 
-    # Generate descriptive filename
+    # Generate clean filename
     chunks_filename = generate_chunks_filename(uploaded_files)
     
-    # Add metadata header
-    session_id = st.session_state.get('session_id', 'unknown')
-    metadata_header = f"""Document Processing Metadata
-{'='*50}
+    # Get session ID (create one if doesn't exist)
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    session_id = st.session_state.session_id
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Add metadata header with timestamp and session info at the top
+    metadata_header = f"""DOCUMENT PROCESSING INFORMATION
+{'='*80}
+Processing Timestamp: {timestamp}
 Session ID: {session_id}
-Processing Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 Files Processed: {', '.join([f.name for f in uploaded_files])}
 Total Files: {len(uploaded_files)}
-{'='*50}
+{'='*80}
 
 """
     chunks_content.append(metadata_header)
@@ -405,10 +420,16 @@ def main():
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     st.text(filename)
+                    # Get and display file statistics
+                    char_count, token_count = get_file_stats(filename)
+                    if char_count > 0:
+                        # Format numbers with commas for readability
+                        st.caption(f"📊 {char_count:,} characters • ~{token_count:,} tokens")
+                    else:
+                        st.caption("📊 Unable to read file stats")
                 with col2:
                     if st.button("🗑️", key=f"delete_{filename}", help=f"Delete {filename}"):
                         if delete_file(filename):
-                            #st.success(f"Deleted {filename}")
                             st.rerun()
                         else:
                             st.error(f"Failed to delete {filename}")
