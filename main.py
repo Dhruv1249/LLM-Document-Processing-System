@@ -60,6 +60,60 @@ def load_embedder():
     from sentence_transformers import SentenceTransformer
     return SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
 
+def initialize_session():
+    """Initialize session and clean up files from other sessions."""
+    # Get or create session ID
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.session_state.session_initialized = True
+        st.session_state.last_processed_files = None  # Track last processed files
+        
+        # Clean up files from other sessions
+        cleanup_other_session_files()
+
+def cleanup_other_session_files():
+    """Remove files that don't belong to the current session."""
+    if not os.path.exists(OUTPUT_DIR):
+        return
+    
+    current_session = st.session_state.session_id
+    files_to_delete = []
+    
+    for filename in os.listdir(OUTPUT_DIR):
+        # Skip history files
+        if filename in [CONTEXT_FILE, ANSWER_FILE]:
+            continue
+            
+        filepath = os.path.join(OUTPUT_DIR, filename)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+                # Check if file contains session ID info
+                if "Session ID:" in content:
+                    # Extract session ID from file content
+                    for line in content.split('\n'):
+                        if line.startswith("Session ID:"):
+                            file_session = line.split("Session ID:")[1].strip()
+                            if file_session != current_session:
+                                files_to_delete.append(filename)
+                            break
+                else:
+                    # If no session ID found, it's from an old version - delete it
+                    files_to_delete.append(filename)
+        except Exception:
+            # If we can't read the file, delete it
+            files_to_delete.append(filename)
+    
+    # Delete files from other sessions
+    for filename in files_to_delete:
+        try:
+            os.remove(os.path.join(OUTPUT_DIR, filename))
+        except Exception:
+            pass
+    
+    if files_to_delete:
+        st.sidebar.success(f"Cleaned up {len(files_to_delete)} files from previous sessions")
+
 def save_to_file(content, filename):
     """Save content to a text file in the output directory."""
     filepath = os.path.join(OUTPUT_DIR, filename)
@@ -143,8 +197,23 @@ def get_user_files():
     user_files = [f for f in all_files if f not in [CONTEXT_FILE, ANSWER_FILE]]
     return sorted(user_files, reverse=True)
 
+def create_file_signature(uploaded_files):
+    """Create a unique signature for the uploaded files batch."""
+    if not uploaded_files:
+        return None
+    
+    # Create signature based on filenames and sizes
+    file_info = []
+    for file in uploaded_files:
+        file_info.append(f"{file.name}:{file.size}")
+    
+    return "|".join(sorted(file_info))
+
 def generate_filename(uploaded_files, is_chunked=False):
     """Generate a clean filename based only on document names."""
+    if not uploaded_files:
+        return "unknown.txt"
+    
     # Clean and combine file names (remove extensions and special characters)
     file_names = []
     for file in uploaded_files:
@@ -174,12 +243,18 @@ def process_documents(uploaded_files):
     """
     Processes uploaded files - extracts text and only chunks if token limit exceeded.
     """
+    if not uploaded_files:
+        return []
+    
+    # Create file signature to prevent duplicate processing
+    file_signature = create_file_signature(uploaded_files)
+    
+    # Check if we've already processed these exact files
+    if st.session_state.get('last_processed_files') == file_signature:
+        st.info("Files already processed in this session.")
+        return st.session_state.get('retriever_data', {}).get('documents', [])
+    
     all_chunks = []
-    
-    # Get session ID (create one if doesn't exist)
-    if 'session_id' not in st.session_state:
-        st.session_state.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
     session_id = st.session_state.session_id
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
@@ -187,8 +262,12 @@ def process_documents(uploaded_files):
     all_text = []
     file_info = []
     
+    st.info(f"Processing {len(uploaded_files)} file(s): {', '.join([f.name for f in uploaded_files])}")
+    
     for file in uploaded_files:
         try:
+            # Reset file pointer to beginning
+            file.seek(0)
             file_content = io.BytesIO(file.read())
             file_content.name = file.name
 
@@ -223,20 +302,22 @@ def process_documents(uploaded_files):
 {'='*80}
 Processing Timestamp: {timestamp}
 Session ID: {session_id}
-Files Processed: {', '.join([f.name for f in uploaded_files])}
-Total Files: {len(uploaded_files)}
+Files Processed: {', '.join([info['name'] for info in file_info])}
+Total Files: {len(file_info)}
 Total Tokens: {total_tokens:,}
 Token Limit: {TOKEN_LIMIT:,}
 LLM Token Limit: {LLM_TOKEN_LIMIT:,}
+File Signature: {file_signature}
 {'='*80}
 
 """
     
+    # Generate filename for this batch
+    filename = generate_filename(uploaded_files, is_chunked=(total_tokens > TOKEN_LIMIT))
+    
     # Check if chunking is needed
     if total_tokens <= TOKEN_LIMIT:
         # Save as single file without chunking
-        filename = generate_filename(uploaded_files, is_chunked=False)
-        
         content = metadata_header
         for info in file_info:
             content += f"\n{'#'*60}\n"
@@ -249,26 +330,27 @@ LLM Token Limit: {LLM_TOKEN_LIMIT:,}
         
         saved_path = save_to_file(content, filename)
         if saved_path:
-            st.success(f"Text extracted and saved to: {filename}")
-            st.info(f"Total tokens: {total_tokens:,} (within limit)")
+            st.success(f"✅ Text extracted and saved to: {filename}")
+            st.info(f"📊 Total tokens: {total_tokens:,} (within limit)")
         
         # Create single document for retrieval
         from langchain.schema import Document
         doc = Document(
             page_content=combined_text,
             metadata={
-                'source': ', '.join([f.name for f in uploaded_files]),
+                'source': ', '.join([info['name'] for info in file_info]),
                 'session_id': session_id,
                 'processing_time': datetime.now().isoformat(),
                 'is_chunked': False,
-                'token_count': total_tokens
+                'token_count': total_tokens,
+                'file_signature': file_signature
             }
         )
         all_chunks = [doc]
         
     else:
         # Token limit exceeded - need to chunk
-        st.warning(f"Token limit exceeded ({total_tokens:,} > {TOKEN_LIMIT:,}). Creating chunks...")
+        st.warning(f"⚠️ Token limit exceeded ({total_tokens:,} > {TOKEN_LIMIT:,}). Creating chunks...")
         
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1500,
@@ -277,8 +359,6 @@ LLM Token Limit: {LLM_TOKEN_LIMIT:,}
             length_function=len,
             is_separator_regex=False,
         )
-        
-        filename = generate_filename(uploaded_files, is_chunked=True)
         
         chunks_content = [metadata_header]
         chunks_content.append("CHUNKING APPLIED - TOKEN LIMIT EXCEEDED\n")
@@ -299,6 +379,7 @@ LLM Token Limit: {LLM_TOKEN_LIMIT:,}
                 chunk.metadata['session_id'] = session_id
                 chunk.metadata['processing_time'] = datetime.now().isoformat()
                 chunk.metadata['is_chunked'] = True
+                chunk.metadata['file_signature'] = file_signature
                 
                 chunks_content.append(
                     f"Source: {info['name']} | Chunk {i} | Session: {session_id}\n"
@@ -310,9 +391,12 @@ LLM Token Limit: {LLM_TOKEN_LIMIT:,}
         chunks_text = "\n\n".join(chunks_content)
         saved_path = save_to_file(chunks_text, filename)
         if saved_path:
-            st.success(f"Text chunked and saved to: {filename}")
-            st.info(f"Created {len(all_chunks)} chunks from {total_tokens:,} tokens")
+            st.success(f"✅ Text chunked and saved to: {filename}")
+            st.info(f"📊 Created {len(all_chunks)} chunks from {total_tokens:,} tokens")
 
+    # Store the file signature to prevent reprocessing
+    st.session_state.last_processed_files = file_signature
+    
     return all_chunks
 
 # --- Semantic Retrieval Logic ---
@@ -495,9 +579,11 @@ def main():
     st.set_page_config(page_title="Simple Working RAG System", layout="wide")
     st.title("⚙️ Simple Working RAG System")
     
+    # Initialize session and cleanup
+    initialize_session()
+    
     # Display session info
-    if 'session_id' in st.session_state:
-        st.sidebar.info(f"Session ID: {st.session_state.session_id}")
+    st.sidebar.info(f"Session ID: {st.session_state.session_id}")
 
     if not client:
         st.error("Google API Key missing or invalid. Configure via .env or Streamlit secrets.")
@@ -511,23 +597,33 @@ def main():
         
         uploaded = st.file_uploader(
             "Choose files", accept_multiple_files=True,
-            type=['pdf', 'docx', 'txt', 'md', 'pptx', 'eml']
+            type=['pdf', 'docx', 'txt', 'md', 'pptx', 'eml'],
+            key="file_uploader"
         )
 
         if uploaded:
-            curr_id = "".join(sorted(f.name+str(f.size) for f in uploaded))
-            if st.session_state.get('processed_files_id') != curr_id:
+            # Create file signature for this upload batch
+            file_signature = create_file_signature(uploaded)
+            
+            # Check if this is a new upload batch
+            if st.session_state.get('last_processed_files') != file_signature:
                 with st.spinner("Processing and extracting text..."):
                     docs = process_documents(uploaded)
-                    st.session_state.retriever_data = {
-                        "documents": docs
-                        # Note: embeddings created only when needed
-                    }
-                    st.session_state.processed_files_id = curr_id
-                    st.success(f"{len(docs)} document(s) processed and indexed.")
+                    if docs:  # Only update if processing was successful
+                        st.session_state.retriever_data = {
+                            "documents": docs
+                            # Note: embeddings created only when needed
+                        }
+            else:
+                st.info("✅ Files already processed in this session")
+                # Show what files are currently loaded
+                if st.session_state.get("retriever_data"):
+                    docs = st.session_state.retriever_data["documents"]
+                    st.success(f"📁 {len(docs)} document(s) currently loaded")
 
         if st.session_state.get("retriever_data"):
-            st.sidebar.info(f"Context limits: Max {MAX_CHUNKS} chunks, {MAX_CONTEXT_CHARS:,} chars")
+            docs_count = len(st.session_state.retriever_data["documents"])
+            st.sidebar.success(f"📁 {docs_count} document(s) ready for queries")
 
         # File Management Section
         st.header("📁 File Management")
@@ -554,11 +650,6 @@ def main():
                             st.error(f"Failed to delete {filename}")
         else:
             st.info("No saved files")
-        
-        # Show iteration count
-        if 'iteration_count' in st.session_state:
-            remaining = MAX_ITERATIONS - st.session_state.iteration_count
-            #st.info(f"Iterations until history reset: {remaining}")
 
     # Main: query
     st.header("2. Ask a Question")
