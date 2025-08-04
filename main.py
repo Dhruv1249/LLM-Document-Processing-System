@@ -111,8 +111,8 @@ def cleanup_other_session_files():
         except Exception:
             pass
     
-    if files_to_delete:
-        st.sidebar.success(f"Cleaned up {len(files_to_delete)} files from previous sessions")
+    #if files_to_delete:
+        #st.sidebar.success(f"Cleaned up {len(files_to_delete)} files from previous sessions")
 
 def save_to_file(content, filename):
     """Save content to a text file in the output directory."""
@@ -592,8 +592,8 @@ def main():
     # Sidebar: upload & process
     with st.sidebar:
         st.header("1. Upload Documents")
-        st.info(f"Chunking Limit: {TOKEN_LIMIT:,} tokens")
-        st.info(f"LLM Limit: {LLM_TOKEN_LIMIT:,} tokens (semantic search if exceeded)")
+        #st.info(f"Chunking Limit: {TOKEN_LIMIT:,} tokens")
+        #st.info(f"LLM Limit: {LLM_TOKEN_LIMIT:,} tokens (semantic search if exceeded)")
         
         uploaded = st.file_uploader(
             "Choose files", accept_multiple_files=True,
