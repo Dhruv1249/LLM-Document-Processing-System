@@ -576,8 +576,8 @@ Return ONLY the JSON object (no extra text, no markdown).
 
 # --- Streamlit App ---
 def main():
-    st.set_page_config(page_title="Simple Working RAG System", layout="wide")
-    st.title("⚙️ Simple Working RAG System")
+    st.set_page_config(page_title="LLM Document Processing System", layout="wide")
+    st.title("⚙️ LLM Document Processing System")
     
     # Initialize session and cleanup
     initialize_session()
@@ -591,7 +591,7 @@ def main():
 
     # Sidebar: upload & process
     with st.sidebar:
-        st.header("1. Upload Documents")
+        st.header("📤 Upload Documents")
         #st.info(f"Chunking Limit: {TOKEN_LIMIT:,} tokens")
         #st.info(f"LLM Limit: {LLM_TOKEN_LIMIT:,} tokens (semantic search if exceeded)")
         
@@ -652,8 +652,8 @@ def main():
             st.info("No saved files")
 
     # Main: query
-    st.header("2. Ask a Question")
-    query = st.text_input("Enter your query:", key="query_input")
+    st.header("Enter Your Query")
+    query = st.text_input("What would you like to about your documents?", key="query_input")
 
     if st.button("Process Query"):
         if not query:
