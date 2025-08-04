@@ -13,7 +13,6 @@ from unstructured.partition.auto import partition
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 import numpy as np
-from sentence_transformers import SentenceTransformer, util
 
 # Load environment variables from a .env file
 load_dotenv()
@@ -50,8 +49,16 @@ CONTEXT_FILE = "context_history.txt"
 ANSWER_FILE = "answer_history.txt"
 MAX_ITERATIONS = 3
 
-# Embedding model for semantic search
-embedder = SentenceTransformer('all-MiniLM-L6-v2',device='cpu')
+# Token limits
+TOKEN_LIMIT = 500000  # For chunking decision during document processing
+LLM_TOKEN_LIMIT = 900000  # For semantic search decision during RAG
+
+# Conditional embedding model loading
+@st.cache_resource
+def load_embedder():
+    """Load embedding model only when needed."""
+    from sentence_transformers import SentenceTransformer
+    return SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
 
 def save_to_file(content, filename):
     """Save content to a text file in the output directory."""
@@ -121,6 +128,11 @@ def get_file_stats(filename):
     except Exception as e:
         return 0, 0
 
+def estimate_tokens(text):
+    """Estimate token count for text."""
+    word_count = len(text.split())
+    return int(word_count * 1.33)
+
 def get_user_files():
     """Get list of user files (excluding context and answer history files)."""
     if not os.path.exists(OUTPUT_DIR):
@@ -131,7 +143,7 @@ def get_user_files():
     user_files = [f for f in all_files if f not in [CONTEXT_FILE, ANSWER_FILE]]
     return sorted(user_files, reverse=True)
 
-def generate_chunks_filename(uploaded_files):
+def generate_filename(uploaded_files, is_chunked=False):
     """Generate a clean filename based only on document names."""
     # Clean and combine file names (remove extensions and special characters)
     file_names = []
@@ -149,29 +161,20 @@ def generate_chunks_filename(uploaded_files):
     if len(combined_names) > 80:
         combined_names = combined_names[:80] + "_etc"
     
-    # Generate clean filename with just document names
-    filename = f"{combined_names}.txt"
+    # Add chunked suffix if needed
+    if is_chunked:
+        filename = f"{combined_names}_chunked.txt"
+    else:
+        filename = f"{combined_names}.txt"
+    
     return filename
 
 # --- Advanced Ingestion and Chunking ---
 def process_documents(uploaded_files):
     """
-    Processes uploaded files using 'unstructured' for robust parsing and
-    LangChain for sophisticated chunking.
+    Processes uploaded files - extracts text and only chunks if token limit exceeded.
     """
     all_chunks = []
-    chunks_content = []  # For saving to file
-
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1500,
-        chunk_overlap=300,
-        separators=["\n\n", "\n", ".", " "],
-        length_function=len,
-        is_separator_regex=False,
-    )
-
-    # Generate clean filename
-    chunks_filename = generate_chunks_filename(uploaded_files)
     
     # Get session ID (create one if doesn't exist)
     if 'session_id' not in st.session_state:
@@ -180,18 +183,10 @@ def process_documents(uploaded_files):
     session_id = st.session_state.session_id
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    # Add metadata header with timestamp and session info at the top
-    metadata_header = f"""DOCUMENT PROCESSING INFORMATION
-{'='*80}
-Processing Timestamp: {timestamp}
-Session ID: {session_id}
-Files Processed: {', '.join([f.name for f in uploaded_files])}
-Total Files: {len(uploaded_files)}
-{'='*80}
-
-"""
-    chunks_content.append(metadata_header)
-
+    # Extract all text first
+    all_text = []
+    file_info = []
+    
     for file in uploaded_files:
         try:
             file_content = io.BytesIO(file.read())
@@ -204,83 +199,206 @@ Total Files: {len(uploaded_files)}
                 st.warning(f"No text content found in {file.name}")
                 continue
 
-            chunks = text_splitter.create_documents([full_text])
+            all_text.append(full_text)
+            file_info.append({
+                'name': file.name,
+                'text': full_text,
+                'char_count': len(full_text),
+                'token_count': estimate_tokens(full_text)
+            })
 
-            # Add file separator
+        except Exception as e:
+            st.error(f"Error processing file {file.name}: {e}")
+            continue
+    
+    if not all_text:
+        return []
+    
+    # Combine all text
+    combined_text = "\n\n".join(all_text)
+    total_tokens = estimate_tokens(combined_text)
+    
+    # Add metadata header
+    metadata_header = f"""DOCUMENT PROCESSING INFORMATION
+{'='*80}
+Processing Timestamp: {timestamp}
+Session ID: {session_id}
+Files Processed: {', '.join([f.name for f in uploaded_files])}
+Total Files: {len(uploaded_files)}
+Total Tokens: {total_tokens:,}
+Token Limit: {TOKEN_LIMIT:,}
+LLM Token Limit: {LLM_TOKEN_LIMIT:,}
+{'='*80}
+
+"""
+    
+    # Check if chunking is needed
+    if total_tokens <= TOKEN_LIMIT:
+        # Save as single file without chunking
+        filename = generate_filename(uploaded_files, is_chunked=False)
+        
+        content = metadata_header
+        for info in file_info:
+            content += f"\n{'#'*60}\n"
+            content += f"FILE: {info['name']}\n"
+            content += f"Characters: {info['char_count']:,}\n"
+            content += f"Estimated Tokens: {info['token_count']:,}\n"
+            content += f"{'#'*60}\n\n"
+            content += info['text']
+            content += "\n\n"
+        
+        saved_path = save_to_file(content, filename)
+        if saved_path:
+            st.success(f"Text extracted and saved to: {filename}")
+            st.info(f"Total tokens: {total_tokens:,} (within limit)")
+        
+        # Create single document for retrieval
+        from langchain.schema import Document
+        doc = Document(
+            page_content=combined_text,
+            metadata={
+                'source': ', '.join([f.name for f in uploaded_files]),
+                'session_id': session_id,
+                'processing_time': datetime.now().isoformat(),
+                'is_chunked': False,
+                'token_count': total_tokens
+            }
+        )
+        all_chunks = [doc]
+        
+    else:
+        # Token limit exceeded - need to chunk
+        st.warning(f"Token limit exceeded ({total_tokens:,} > {TOKEN_LIMIT:,}). Creating chunks...")
+        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1500,
+            chunk_overlap=300,
+            separators=["\n\n", "\n", ".", " "],
+            length_function=len,
+            is_separator_regex=False,
+        )
+        
+        filename = generate_filename(uploaded_files, is_chunked=True)
+        
+        chunks_content = [metadata_header]
+        chunks_content.append("CHUNKING APPLIED - TOKEN LIMIT EXCEEDED\n")
+        
+        for info in file_info:
+            chunks = text_splitter.create_documents([info['text']])
+            
             chunks_content.append(f"\n{'#'*60}")
-            chunks_content.append(f"FILE: {file.name}")
-            chunks_content.append(f"File Size: {len(full_text)} characters")
+            chunks_content.append(f"FILE: {info['name']}")
+            chunks_content.append(f"Original Characters: {info['char_count']:,}")
+            chunks_content.append(f"Original Tokens: {info['token_count']:,}")
             chunks_content.append(f"Chunks Generated: {len(chunks)}")
             chunks_content.append(f"{'#'*60}\n")
 
             for i, chunk in enumerate(chunks):
-                chunk.metadata['source'] = file.name
+                chunk.metadata['source'] = info['name']
                 chunk.metadata['chunk_id'] = i
                 chunk.metadata['session_id'] = session_id
                 chunk.metadata['processing_time'] = datetime.now().isoformat()
+                chunk.metadata['is_chunked'] = True
                 
                 chunks_content.append(
-                    f"Source: {file.name} | Chunk {i} | Session: {session_id}\n"
+                    f"Source: {info['name']} | Chunk {i} | Session: {session_id}\n"
                     f"Content: {chunk.page_content}\n{'-'*50}"
                 )
 
             all_chunks.extend(chunks)
-
-        except Exception as e:
-            st.error(f"Error processing file {file.name}: {e}")
-            chunks_content.append(f"\nERROR processing {file.name}: {str(e)}\n")
-            continue
-
-    if chunks_content:
+        
         chunks_text = "\n\n".join(chunks_content)
-        saved_path = save_to_file(chunks_text, chunks_filename)
+        saved_path = save_to_file(chunks_text, filename)
         if saved_path:
-            st.success(f"Source chunks saved to: {chunks_filename}")
-            st.info(f"Session ID: {session_id}")
+            st.success(f"Text chunked and saved to: {filename}")
+            st.info(f"Created {len(all_chunks)} chunks from {total_tokens:,} tokens")
 
     return all_chunks
 
 # --- Semantic Retrieval Logic ---
 def retrieve_and_format_chunks(query, retriever_data):
     """
-    Retrieves relevant chunks using dense embeddings and formats them.
+    Retrieves relevant chunks using dense embeddings only if total tokens exceed LLM limit.
+    Otherwise returns all data directly.
     """
     if not retriever_data:
         st.error("Retriever data is not available. Please process documents first.")
         return []
 
     documents = retriever_data["documents"]
-    embeddings = retriever_data["embeddings"]
+    
+    # Calculate total tokens of all documents
+    total_tokens = 0
+    for doc in documents:
+        total_tokens += estimate_tokens(doc.page_content)
+    
+    st.info(f"Total available tokens: {total_tokens:,}")
+    
+    # Check if we need semantic search or can send all data
+    if total_tokens <= LLM_TOKEN_LIMIT:
+        st.info(f"Tokens within LLM limit ({LLM_TOKEN_LIMIT:,}). Sending all data to LLM.")
+        
+        # Return all documents without semantic search
+        all_chunks = []
+        for doc in documents:
+            chunk_text = (
+                f"Source: {doc.metadata.get('source', 'Unknown')}\n"
+                f"Chunk ID: {doc.metadata.get('chunk_id', 'N/A')}\n"
+                f"Session ID: {doc.metadata.get('session_id', 'Unknown')}\n"
+                f"Content: {doc.page_content}"
+            )
+            all_chunks.append(chunk_text)
+        
+        return all_chunks
+    
+    else:
+        st.warning(f"Tokens exceed LLM limit ({total_tokens:,} > {LLM_TOKEN_LIMIT:,}). Using semantic search.")
+        
+        # Load embedder only when needed
+        with st.spinner("Loading embedding model for semantic search..."):
+            embedder = load_embedder()
+        
+        # Get embeddings (create if not exist)
+        if "embeddings" not in retriever_data:
+            with st.spinner("Creating embeddings for semantic search..."):
+                texts = [d.page_content for d in documents]
+                from sentence_transformers import util
+                embeddings = embedder.encode(texts, convert_to_tensor=True)
+                retriever_data["embeddings"] = embeddings
+        else:
+            embeddings = retriever_data["embeddings"]
+            from sentence_transformers import util
 
-    # Compute query embedding
-    query_embedding = embedder.encode(query, convert_to_tensor=True)
-    cosine_scores = util.cos_sim(query_embedding, embeddings)[0]
+        # Compute query embedding
+        query_embedding = embedder.encode(query, convert_to_tensor=True)
+        cosine_scores = util.cos_sim(query_embedding, embeddings)[0]
 
-    # Pick top-k
-    top_k = min(MAX_CHUNKS, len(cosine_scores))
-    top_k_indices = cosine_scores.argsort(descending=True)[:top_k]
+        # Pick top-k
+        top_k = min(MAX_CHUNKS, len(cosine_scores))
+        top_k_indices = cosine_scores.argsort(descending=True)[:top_k]
 
-    selected_chunks = []
-    total_chars = 0
+        selected_chunks = []
+        total_chars = 0
 
-    for idx in top_k_indices:
-        score = cosine_scores[idx].item()
-        if score < 0.2:
-            continue
-        doc = documents[idx]
-        chunk_text = (
-            f"Source: {doc.metadata.get('source', 'Unknown')}\n"
-            f"Chunk ID: {doc.metadata.get('chunk_id', 'Unknown')}\n"
-            f"Session ID: {doc.metadata.get('session_id', 'Unknown')}\n"
-            f"Similarity Score: {score:.3f}\n\n"
-            f"Content: {doc.page_content}"
-        )
-        if total_chars + len(chunk_text) > MAX_CONTEXT_CHARS:
-            break
-        selected_chunks.append(chunk_text)
-        total_chars += len(chunk_text)
+        for idx in top_k_indices:
+            score = cosine_scores[idx].item()
+            if score < 0.2:
+                continue
+            doc = documents[idx]
+            chunk_text = (
+                f"Source: {doc.metadata.get('source', 'Unknown')}\n"
+                f"Chunk ID: {doc.metadata.get('chunk_id', 'N/A')}\n"
+                f"Session ID: {doc.metadata.get('session_id', 'Unknown')}\n"
+                f"Similarity Score: {score:.3f}\n\n"
+                f"Content: {doc.page_content}"
+            )
+            if total_chars + len(chunk_text) > MAX_CONTEXT_CHARS:
+                break
+            selected_chunks.append(chunk_text)
+            total_chars += len(chunk_text)
 
-    return selected_chunks
+        st.info(f"Selected {len(selected_chunks)} most relevant chunks via semantic search.")
+        return selected_chunks
 
 # --- Gemini Model Interaction (unchanged) ---
 def get_gemini_response(prompt, client):
@@ -388,6 +506,9 @@ def main():
     # Sidebar: upload & process
     with st.sidebar:
         st.header("1. Upload Documents")
+        st.info(f"Chunking Limit: {TOKEN_LIMIT:,} tokens")
+        st.info(f"LLM Limit: {LLM_TOKEN_LIMIT:,} tokens (semantic search if exceeded)")
+        
         uploaded = st.file_uploader(
             "Choose files", accept_multiple_files=True,
             type=['pdf', 'docx', 'txt', 'md', 'pptx', 'eml']
@@ -396,16 +517,14 @@ def main():
         if uploaded:
             curr_id = "".join(sorted(f.name+str(f.size) for f in uploaded))
             if st.session_state.get('processed_files_id') != curr_id:
-                with st.spinner("Processing and chunking..."):
+                with st.spinner("Processing and extracting text..."):
                     docs = process_documents(uploaded)
-                    texts = [d.page_content for d in docs]
-                    embs = embedder.encode(texts, convert_to_tensor=True)
                     st.session_state.retriever_data = {
-                        "documents": docs,
-                        "embeddings": embs
+                        "documents": docs
+                        # Note: embeddings created only when needed
                     }
                     st.session_state.processed_files_id = curr_id
-                    st.success(f"{len(docs)} chunks created and indexed.")
+                    st.success(f"{len(docs)} document(s) processed and indexed.")
 
         if st.session_state.get("retriever_data"):
             st.sidebar.info(f"Context limits: Max {MAX_CHUNKS} chunks, {MAX_CONTEXT_CHARS:,} chars")
