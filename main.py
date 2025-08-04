@@ -45,6 +45,11 @@ if not os.path.exists(OUTPUT_DIR):
 MAX_CONTEXT_CHARS = 80000
 MAX_CHUNKS = 30
 
+# File management constants
+CONTEXT_FILE = "context_history.txt"
+ANSWER_FILE = "answer_history.txt"
+MAX_ITERATIONS = 3
+
 # Embedding model for semantic search
 embedder = SentenceTransformer('all-MiniLM-L6-v2',device='cpu')
 
@@ -58,6 +63,86 @@ def save_to_file(content, filename):
     except Exception as e:
         st.error(f"Error saving file {filename}: {e}")
         return None
+
+def append_to_history_file(content, filename):
+    """Append content to a history file and manage iterations."""
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    
+    # Initialize session state for iteration tracking
+    if 'iteration_count' not in st.session_state:
+        st.session_state.iteration_count = 0
+    
+    # Clear file if starting new cycle
+    if st.session_state.iteration_count >= MAX_ITERATIONS:
+        st.session_state.iteration_count = 0
+        if os.path.exists(filepath):
+            os.remove(filepath)
+    
+    try:
+        # Append to file
+        with open(filepath, 'a', encoding='utf-8') as f:
+            f.write(f"\n{'='*80}\n")
+            f.write(f"Iteration {st.session_state.iteration_count + 1} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"{'='*80}\n")
+            f.write(content)
+            f.write("\n\n")
+        
+        st.session_state.iteration_count += 1
+        return filepath
+    except Exception as e:
+        st.error(f"Error appending to file {filename}: {e}")
+        return None
+
+def delete_file(filename):
+    """Delete a file from the output directory."""
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    try:
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Error deleting file {filename}: {e}")
+        return False
+
+def get_user_files():
+    """Get list of user files (excluding context and answer history files)."""
+    if not os.path.exists(OUTPUT_DIR):
+        return []
+    
+    all_files = os.listdir(OUTPUT_DIR)
+    # Filter out context and answer history files
+    user_files = [f for f in all_files if f not in [CONTEXT_FILE, ANSWER_FILE]]
+    return sorted(user_files, reverse=True)
+
+def generate_chunks_filename(uploaded_files):
+    """Generate a descriptive filename for chunks based on uploaded files and session."""
+    # Get session ID (create one if doesn't exist)
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    session_id = st.session_state.session_id
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Clean and combine file names (remove extensions and special characters)
+    file_names = []
+    for file in uploaded_files:
+        # Remove extension and clean filename
+        clean_name = os.path.splitext(file.name)[0]
+        # Replace special characters with underscores
+        clean_name = "".join(c if c.isalnum() else "_" for c in clean_name)
+        # Limit length to avoid overly long filenames
+        clean_name = clean_name[:20]
+        file_names.append(clean_name)
+    
+    # Combine file names (limit total length)
+    combined_names = "_".join(file_names)
+    if len(combined_names) > 50:
+        combined_names = combined_names[:50] + "_etc"
+    
+    # Generate final filename
+    filename = f"{combined_names}_{timestamp}_session_{session_id}.txt"
+    return filename
 
 # --- Advanced Ingestion and Chunking ---
 def process_documents(uploaded_files):
@@ -76,6 +161,22 @@ def process_documents(uploaded_files):
         is_separator_regex=False,
     )
 
+    # Generate descriptive filename
+    chunks_filename = generate_chunks_filename(uploaded_files)
+    
+    # Add metadata header
+    session_id = st.session_state.get('session_id', 'unknown')
+    metadata_header = f"""Document Processing Metadata
+{'='*50}
+Session ID: {session_id}
+Processing Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Files Processed: {', '.join([f.name for f in uploaded_files])}
+Total Files: {len(uploaded_files)}
+{'='*50}
+
+"""
+    chunks_content.append(metadata_header)
+
     for file in uploaded_files:
         try:
             file_content = io.BytesIO(file.read())
@@ -90,30 +191,37 @@ def process_documents(uploaded_files):
 
             chunks = text_splitter.create_documents([full_text])
 
+            # Add file separator
+            chunks_content.append(f"\n{'#'*60}")
+            chunks_content.append(f"FILE: {file.name}")
+            chunks_content.append(f"File Size: {len(full_text)} characters")
+            chunks_content.append(f"Chunks Generated: {len(chunks)}")
+            chunks_content.append(f"{'#'*60}\n")
+
             for i, chunk in enumerate(chunks):
                 chunk.metadata['source'] = file.name
                 chunk.metadata['chunk_id'] = i
+                chunk.metadata['session_id'] = session_id
+                chunk.metadata['processing_time'] = datetime.now().isoformat()
+                
                 chunks_content.append(
-                    f"Source: {file.name} | Chunk {i}\n{chunk.page_content}\n{'-'*50}"
+                    f"Source: {file.name} | Chunk {i} | Session: {session_id}\n"
+                    f"Content: {chunk.page_content}\n{'-'*50}"
                 )
 
             all_chunks.extend(chunks)
 
         except Exception as e:
             st.error(f"Error processing file {file.name}: {e}")
+            chunks_content.append(f"\nERROR processing {file.name}: {str(e)}\n")
             continue
 
     if chunks_content:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        chunks_filename = f"chunks_{timestamp}.txt"
-        chunks_text = (
-            f"Document Chunks Generated on "
-            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-            + "\n\n".join(chunks_content)
-        )
+        chunks_text = "\n\n".join(chunks_content)
         saved_path = save_to_file(chunks_text, chunks_filename)
         if saved_path:
-            st.success(f"Source chunks saved to: {saved_path}")
+            st.success(f"Source chunks saved to: {chunks_filename}")
+            st.info(f"Session ID: {session_id}")
 
     return all_chunks
 
@@ -148,6 +256,7 @@ def retrieve_and_format_chunks(query, retriever_data):
         chunk_text = (
             f"Source: {doc.metadata.get('source', 'Unknown')}\n"
             f"Chunk ID: {doc.metadata.get('chunk_id', 'Unknown')}\n"
+            f"Session ID: {doc.metadata.get('session_id', 'Unknown')}\n"
             f"Similarity Score: {score:.3f}\n\n"
             f"Content: {doc.page_content}"
         )
@@ -194,7 +303,7 @@ def get_gemini_response(prompt, client):
     except Exception as e:
         return f"Unexpected error: {e}"
 
-# --- Full RAG pipeline (unchanged) ---
+# --- Full RAG pipeline ---
 def perform_rag(query, retriever_data, client):
     if not retriever_data:
         return "Error: No documents available for processing."
@@ -203,15 +312,16 @@ def perform_rag(query, retriever_data, client):
     if not selected_chunks:
         return "Error: No relevant chunks found for the query."
 
-    # Save context for debugging
+    # Save context to history file
     chunks_text = "\n\n" + "="*80 + "\n\n".join(selected_chunks)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    ctx_fname = f"context_{ts}.txt"
+    session_id = st.session_state.get('session_id', 'unknown')
     ctx_content = (
-        f"Query: {query}\nTimestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"Query: {query}\n"
+        f"Session ID: {session_id}\n"
+        f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"Selected {len(selected_chunks)} chunks\n\nContext:\n{chunks_text}"
     )
-    save_to_file(ctx_content, ctx_fname)
+    append_to_history_file(ctx_content, CONTEXT_FILE)
 
     final_prompt = f"""
     You are an expert document analysis system. Analyze ONLY the context below:
@@ -236,15 +346,25 @@ Return ONLY the JSON object (no extra text, no markdown).
     """
 
     answer = get_gemini_response(final_prompt, client)
-    ans_fname = f"answer_{ts}.txt"
-    save_to_file(f"Query: {query}\nAnswer:\n{answer}", ans_fname)
-    return answer, ans_fname
+    
+    # Save answer to history file
+    ans_content = (
+        f"Query: {query}\n"
+        f"Session ID: {session_id}\n"
+        f"Answer:\n{answer}"
+    )
+    append_to_history_file(ans_content, ANSWER_FILE)
+    
+    return answer
 
 # --- Streamlit App ---
 def main():
     st.set_page_config(page_title="Simple Working RAG System", layout="wide")
     st.title("⚙️ Simple Working RAG System")
     
+    # Display session info
+    if 'session_id' in st.session_state:
+        st.sidebar.info(f"Session ID: {st.session_state.session_id}")
 
     if not client:
         st.error("Google API Key missing or invalid. Configure via .env or Streamlit secrets.")
@@ -275,6 +395,31 @@ def main():
         if st.session_state.get("retriever_data"):
             st.sidebar.info(f"Context limits: Max {MAX_CHUNKS} chunks, {MAX_CONTEXT_CHARS:,} chars")
 
+        # File Management Section
+        st.header("📁 File Management")
+        user_files = get_user_files()
+        
+        if user_files:
+            st.subheader("Saved Files")
+            for filename in user_files:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.text(filename)
+                with col2:
+                    if st.button("🗑️", key=f"delete_{filename}", help=f"Delete {filename}"):
+                        if delete_file(filename):
+                            #st.success(f"Deleted {filename}")
+                            st.rerun()
+                        else:
+                            st.error(f"Failed to delete {filename}")
+        else:
+            st.info("No saved files")
+        
+        # Show iteration count
+        if 'iteration_count' in st.session_state:
+            remaining = MAX_ITERATIONS - st.session_state.iteration_count
+            #st.info(f"Iterations until history reset: {remaining}")
+
     # Main: query
     st.header("2. Ask a Question")
     query = st.text_input("Enter your query:", key="query_input")
@@ -287,35 +432,21 @@ def main():
         else:
             with st.spinner("Running RAG..."):
                 result = perform_rag(query, st.session_state.retriever_data, client)
-                if isinstance(result, tuple):
-                    resp, path = result
-                else:
-                    resp, path = result, None
 
-                if resp.startswith("Error:"):
-                    st.error(resp)
+                if result.startswith("Error:"):
+                    st.error(result)
                 else:
                     # Attempt JSON parse
                     try:
                         # strip markdown fences
-                        txt = resp.strip().lstrip("```json").rstrip("```").strip()
+                        txt = result.strip().lstrip("```json").rstrip("```").strip()
                         obj = json.loads(txt)
                         st.json(obj)
-                        if path:
-                            st.info(f"Answer saved to: {path}")
+                        st.info("Answer saved to history")
                     except Exception:
                         st.subheader("Raw Response")
-                        st.text_area("", resp, height=300)
-                        if path:
-                            st.info(f"Raw answer saved to: {path}")
-
-    # Sidebar: show saved files
-    if os.path.exists(OUTPUT_DIR):
-        files = os.listdir(OUTPUT_DIR)
-        if files:
-            st.sidebar.header(" Saved Files")
-            for fn in sorted(files, reverse=True)[:5]:
-                st.sidebar.text(fn)
+                        st.text_area("", result, height=300)
+                        st.info("Raw answer saved to history")
 
 if __name__ == "__main__":
     main()
