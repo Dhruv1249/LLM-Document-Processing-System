@@ -68,9 +68,9 @@ cd LLM-Document-Processing-System
 It's a best practice to use a virtual environment to manage project dependencies and avoid conflicts with other Python projects.
 
 
-
-# Create the virtual environment
 ```Bash
+# Create the virtual environment
+
 python -m venv venv
 
 # Activate it
