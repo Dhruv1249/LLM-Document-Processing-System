@@ -18,13 +18,37 @@ The system is built with an interactive web interface using Streamlit, making it
 
 ---
 
-## 🏗️ How It Works (Architecture)
+## 🧱 Architecture Overview
 
-The system follows a Retrieval-Augmented Generation (RAG) pipeline which has two main phases:
+1. **Document Ingestion**:
+   - Files are parsed using `unstructured` to extract clean text.
+   - Text is chunked via `LangChain` for optimal context.
 
-1.  **Ingestion & Indexing**: When you upload documents, they are first parsed by the `unstructured` library to extract raw text. This text is then split into smaller, manageable chunks by `LangChain`. Finally, the `Sentence-Transformers` model converts each chunk into a numerical vector (embedding) that captures its semantic meaning. These are stored in memory for searching.
+2. **Embedding & Indexing**:
+   - Each chunk is converted into an embedding using `sentence-transformers`.
+   - Embeddings are stored in-memory for semantic search.
 
-2.  **Query & Response**: When you ask a question, your query is also converted into an embedding. The system then performs a similarity search to find the most relevant document chunks. These chunks are combined with your original query and sent as a detailed prompt to the Google Gemini model, which generates the final, source-based answer.
+3. **Query Pipeline**:
+   - Query is embedded and matched to top relevant chunks.
+   - LLM (Google Gemini) receives query + chunks for contextual reasoning.
+
+4. **Output**:
+   - Response is parsed into JSON: `decision`, `amount`, `justification`.
+   - Shown on the Streamlit UI.
+
+---
+
+## 🛠️ Tech Stack
+
+| Component              | Tool/Library                 |
+|------------------------|------------------------------|
+| LLM                    | Google Gemini API            |
+| Embeddings             | sentence-transformers        |
+| Vector Search          | In-memory via FAISS-style    |
+| Document Parsing       | unstructured, pdfplumber     |
+| Query Interface        | Streamlit                    |
+| Chunking & Routing     | LangChain                    |
+| Env Handling           | python-dotenv                |
 
 ---
 
