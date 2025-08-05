@@ -40,18 +40,18 @@ OUTPUT_DIR = "rag_outputs"
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
-# Context limits (conservative estimates)
-MAX_CONTEXT_CHARS = 80000
-MAX_CHUNKS = 30
-
 # File management constants
 CONTEXT_FILE = "context_history.txt"
 ANSWER_FILE = "answer_history.txt"
 MAX_ITERATIONS = 3
 
-# Token limits
-TOKEN_LIMIT = 500000  # For chunking decision during document processing
-LLM_TOKEN_LIMIT = 900000  # For semantic search decision during RAG
+# Default token limits and chunk settings
+DEFAULT_TOKEN_LIMIT = 500000  # For chunking decision during document processing
+DEFAULT_LLM_TOKEN_LIMIT = 900000  # For semantic search decision during RAG
+DEFAULT_MAX_CONTEXT_CHARS = 80000
+DEFAULT_MAX_CHUNKS = 30
+DEFAULT_CHUNK_SIZE = 1500  # Characters per chunk
+DEFAULT_CHUNK_OVERLAP = 300  # Character overlap between chunks
 
 # Conditional embedding model loading
 @st.cache_resource
@@ -60,6 +60,17 @@ def load_embedder():
     from sentence_transformers import SentenceTransformer
     return SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
 
+def get_token_limits():
+    """Get current token limits and chunk settings from session state."""
+    return {
+        'token_limit': st.session_state.get('token_limit', DEFAULT_TOKEN_LIMIT),
+        'llm_token_limit': st.session_state.get('llm_token_limit', DEFAULT_LLM_TOKEN_LIMIT),
+        'max_context_chars': st.session_state.get('max_context_chars', DEFAULT_MAX_CONTEXT_CHARS),
+        'max_chunks': st.session_state.get('max_chunks', DEFAULT_MAX_CHUNKS),
+        'chunk_size': st.session_state.get('chunk_size', DEFAULT_CHUNK_SIZE),
+        'chunk_overlap': st.session_state.get('chunk_overlap', DEFAULT_CHUNK_OVERLAP)
+    }
+
 def initialize_session():
     """Initialize session and clean up files from other sessions."""
     # Get or create session ID
@@ -67,6 +78,14 @@ def initialize_session():
         st.session_state.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         st.session_state.session_initialized = True
         st.session_state.last_processed_files = None  # Track last processed files
+        
+        # Initialize token limits and chunk settings in session state
+        st.session_state.token_limit = DEFAULT_TOKEN_LIMIT
+        st.session_state.llm_token_limit = DEFAULT_LLM_TOKEN_LIMIT
+        st.session_state.max_context_chars = DEFAULT_MAX_CONTEXT_CHARS
+        st.session_state.max_chunks = DEFAULT_MAX_CHUNKS
+        st.session_state.chunk_size = DEFAULT_CHUNK_SIZE
+        st.session_state.chunk_overlap = DEFAULT_CHUNK_OVERLAP
         
         # Clean up files from other sessions
         cleanup_other_session_files()
@@ -110,9 +129,6 @@ def cleanup_other_session_files():
             os.remove(os.path.join(OUTPUT_DIR, filename))
         except Exception:
             pass
-    
-    #if files_to_delete:
-        #st.sidebar.success(f"Cleaned up {len(files_to_delete)} files from previous sessions")
 
 def save_to_file(content, filename):
     """Save content to a text file in the output directory."""
@@ -241,10 +257,17 @@ def generate_filename(uploaded_files, is_chunked=False):
 # --- Advanced Ingestion and Chunking ---
 def process_documents(uploaded_files):
     """
-    Processes uploaded files - extracts text and only chunks if token limit exceeded.
+    Processes uploaded files - extracts text and chunks based on enhanced logic.
     """
     if not uploaded_files:
         return []
+    
+    # Get current token limits and chunk settings
+    limits = get_token_limits()
+    token_limit = limits['token_limit']
+    llm_token_limit = limits['llm_token_limit']
+    chunk_size = limits['chunk_size']
+    chunk_overlap = limits['chunk_overlap']
     
     # Create file signature to prevent duplicate processing
     file_signature = create_file_signature(uploaded_files)
@@ -305,19 +328,42 @@ Session ID: {session_id}
 Files Processed: {', '.join([info['name'] for info in file_info])}
 Total Files: {len(file_info)}
 Total Tokens: {total_tokens:,}
-Token Limit: {TOKEN_LIMIT:,}
-LLM Token Limit: {LLM_TOKEN_LIMIT:,}
+Token Limit (Chunking): {token_limit:,}
+LLM Token Limit: {llm_token_limit:,}
+Chunk Size: {chunk_size} characters
+Chunk Overlap: {chunk_overlap} characters
 File Signature: {file_signature}
 {'='*80}
 
 """
     
     # Generate filename for this batch
-    filename = generate_filename(uploaded_files, is_chunked=(total_tokens > TOKEN_LIMIT))
+    filename = generate_filename(uploaded_files, is_chunked=(total_tokens > token_limit))
     
-    # Check if chunking is needed
-    if total_tokens <= TOKEN_LIMIT:
+    # ENHANCED LOGIC: Consider both individual file limits AND LLM limits
+    needs_chunking = False
+    chunking_reason = ""
+    
+    # Check if any individual file exceeds token_limit
+    large_files = [info for info in file_info if info['token_count'] > token_limit]
+    if large_files:
+        needs_chunking = True
+        chunking_reason = f"Individual file(s) exceed limit: {[f['name'] for f in large_files]}"
+    
+    # Check if combined total exceeds LLM_TOKEN_LIMIT (even if individuals are small)
+    elif total_tokens > llm_token_limit:
+        needs_chunking = True
+        chunking_reason = f"Combined total ({total_tokens:,}) exceeds LLM limit ({llm_token_limit:,})"
+    
+    # Check if combined total exceeds TOKEN_LIMIT (original logic)
+    elif total_tokens > token_limit:
+        needs_chunking = True
+        chunking_reason = f"Combined total ({total_tokens:,}) exceeds chunking limit ({token_limit:,})"
+    
+    if not needs_chunking:
         # Save as single file without chunking
+        st.success(f"📊 Total tokens: {total_tokens:,} - No chunking needed")
+        
         content = metadata_header
         for info in file_info:
             content += f"\n{'#'*60}\n"
@@ -331,7 +377,6 @@ File Signature: {file_signature}
         saved_path = save_to_file(content, filename)
         if saved_path:
             st.success(f"✅ Text extracted and saved to: {filename}")
-            st.info(f"📊 Total tokens: {total_tokens:,} (within limit)")
         
         # Create single document for retrieval
         from langchain.schema import Document
@@ -349,19 +394,22 @@ File Signature: {file_signature}
         all_chunks = [doc]
         
     else:
-        # Token limit exceeded - need to chunk
-        st.warning(f"⚠️ Token limit exceeded ({total_tokens:,} > {TOKEN_LIMIT:,}). Creating chunks...")
+        # Chunking needed
+        st.warning(f"⚠️ Chunking required: {chunking_reason}")
+        st.info(f"📏 Using chunk size: {chunk_size} chars, overlap: {chunk_overlap} chars")
         
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1500,
-            chunk_overlap=300,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
             separators=["\n\n", "\n", ".", " "],
             length_function=len,
             is_separator_regex=False,
         )
         
         chunks_content = [metadata_header]
-        chunks_content.append("CHUNKING APPLIED - TOKEN LIMIT EXCEEDED\n")
+        chunks_content.append(f"CHUNKING APPLIED - {chunking_reason}\n")
+        chunks_content.append(f"Chunk Size: {chunk_size} characters\n")
+        chunks_content.append(f"Chunk Overlap: {chunk_overlap} characters\n")
         
         for info in file_info:
             chunks = text_splitter.create_documents([info['text']])
@@ -380,6 +428,8 @@ File Signature: {file_signature}
                 chunk.metadata['processing_time'] = datetime.now().isoformat()
                 chunk.metadata['is_chunked'] = True
                 chunk.metadata['file_signature'] = file_signature
+                chunk.metadata['chunk_size'] = chunk_size
+                chunk.metadata['chunk_overlap'] = chunk_overlap
                 
                 chunks_content.append(
                     f"Source: {info['name']} | Chunk {i} | Session: {session_id}\n"
@@ -402,12 +452,17 @@ File Signature: {file_signature}
 # --- Semantic Retrieval Logic ---
 def retrieve_and_format_chunks(query, retriever_data):
     """
-    Retrieves relevant chunks using dense embeddings only if total tokens exceed LLM limit.
-    Otherwise returns all data directly.
+    Enhanced retrieval with better feedback about processing decisions.
     """
     if not retriever_data:
         st.error("Retriever data is not available. Please process documents first.")
         return []
+
+    # Get current limits
+    limits = get_token_limits()
+    llm_token_limit = limits['llm_token_limit']
+    max_context_chars = limits['max_context_chars']
+    max_chunks = limits['max_chunks']
 
     documents = retriever_data["documents"]
     
@@ -416,11 +471,17 @@ def retrieve_and_format_chunks(query, retriever_data):
     for doc in documents:
         total_tokens += estimate_tokens(doc.page_content)
     
-    st.info(f"Total available tokens: {total_tokens:,}")
+    # Check if documents were pre-chunked
+    is_chunked = any(doc.metadata.get('is_chunked', False) for doc in documents)
+    
+    if is_chunked:
+        st.info(f"📊 Using {len(documents)} pre-chunked documents ({total_tokens:,} tokens)")
+    else:
+        st.info(f"📊 Using {len(documents)} full document(s) ({total_tokens:,} tokens)")
     
     # Check if we need semantic search or can send all data
-    if total_tokens <= LLM_TOKEN_LIMIT:
-        st.info(f"Tokens within LLM limit ({LLM_TOKEN_LIMIT:,}). Sending all data to LLM.")
+    if total_tokens <= llm_token_limit:
+        st.success(f"✅ Sending all data to LLM (within {llm_token_limit:,} token limit)")
         
         # Return all documents without semantic search
         all_chunks = []
@@ -436,7 +497,8 @@ def retrieve_and_format_chunks(query, retriever_data):
         return all_chunks
     
     else:
-        st.warning(f"Tokens exceed LLM limit ({total_tokens:,} > {LLM_TOKEN_LIMIT:,}). Using semantic search.")
+        st.warning(f"⚠️ Using semantic search: {total_tokens:,} tokens > {llm_token_limit:,} limit")
+        st.info(f"🔍 Will select top {max_chunks} most relevant chunks (max {max_context_chars:,} chars)")
         
         # Load embedder only when needed
         with st.spinner("Loading embedding model for semantic search..."):
@@ -458,7 +520,7 @@ def retrieve_and_format_chunks(query, retriever_data):
         cosine_scores = util.cos_sim(query_embedding, embeddings)[0]
 
         # Pick top-k
-        top_k = min(MAX_CHUNKS, len(cosine_scores))
+        top_k = min(max_chunks, len(cosine_scores))
         top_k_indices = cosine_scores.argsort(descending=True)[:top_k]
 
         selected_chunks = []
@@ -476,15 +538,15 @@ def retrieve_and_format_chunks(query, retriever_data):
                 f"Similarity Score: {score:.3f}\n\n"
                 f"Content: {doc.page_content}"
             )
-            if total_chars + len(chunk_text) > MAX_CONTEXT_CHARS:
+            if total_chars + len(chunk_text) > max_context_chars:
                 break
             selected_chunks.append(chunk_text)
             total_chars += len(chunk_text)
 
-        st.info(f"Selected {len(selected_chunks)} most relevant chunks via semantic search.")
+        st.info(f"📋 Selected {len(selected_chunks)} most relevant chunks via semantic search")
         return selected_chunks
 
-# --- Gemini Model Interaction (unchanged) ---
+# --- Gemini Model Interaction ---
 def get_gemini_response(prompt, client):
     """
     Sends a prompt to the Gemini model using the streaming API.
@@ -589,11 +651,110 @@ def main():
         st.error("Google API Key missing or invalid. Configure via .env or Streamlit secrets.")
         return
 
-    # Sidebar: upload & process
+    # Sidebar: Debug Controls
     with st.sidebar:
+        st.header("🔧 Debug Controls")
+        with st.expander("Token Limits & Chunk Configuration", expanded=False):
+            st.subheader("Processing Limits")
+            
+            # Chunking Token Limit
+            new_token_limit = st.number_input(
+                "Chunking Token Limit",
+                min_value=10000,
+                max_value=2000000,
+                value=st.session_state.get('token_limit', DEFAULT_TOKEN_LIMIT),
+                step=10000,
+                help="Documents exceeding this limit will be chunked during processing"
+            )
+            
+            # LLM Token Limit
+            new_llm_token_limit = st.number_input(
+                "LLM Token Limit",
+                min_value=50000,
+                max_value=2000000,
+                value=st.session_state.get('llm_token_limit', DEFAULT_LLM_TOKEN_LIMIT),
+                step=10000,
+                help="If total tokens exceed this, semantic search will be used instead of sending all data"
+            )
+            
+            st.subheader("Chunking Settings")
+            
+            # Chunk Size
+            new_chunk_size = st.number_input(
+                "Chunk Size (characters)",
+                min_value=500,
+                max_value=5000,
+                value=st.session_state.get('chunk_size', DEFAULT_CHUNK_SIZE),
+                step=100,
+                help="Size of each text chunk when documents are split. Larger chunks = more context per chunk but fewer chunks."
+            )
+            
+            # Chunk Overlap
+            new_chunk_overlap = st.number_input(
+                "Chunk Overlap (characters)",
+                min_value=0,
+                max_value=1000,
+                value=st.session_state.get('chunk_overlap', DEFAULT_CHUNK_OVERLAP),
+                step=50,
+                help="Character overlap between consecutive chunks. Helps maintain context across chunk boundaries."
+            )
+            
+            st.subheader("Semantic Search Settings")
+            
+            # Max Context Characters
+            new_max_context_chars = st.number_input(
+                "Max Context Characters",
+                min_value=10000,
+                max_value=200000,
+                value=st.session_state.get('max_context_chars', DEFAULT_MAX_CONTEXT_CHARS),
+                step=5000,
+                help="Maximum characters to send to LLM when using semantic search. Controls final context size."
+            )
+            
+            # Max Chunks
+            new_max_chunks = st.number_input(
+                "Max Chunks for Semantic Search",
+                min_value=5,
+                max_value=100,
+                value=st.session_state.get('max_chunks', DEFAULT_MAX_CHUNKS),
+                step=5,
+                help="Maximum number of chunks to consider when using semantic search. Higher = more comprehensive but slower search."
+            )
+            
+            # Update session state if values changed
+            if (new_token_limit != st.session_state.get('token_limit') or
+                new_llm_token_limit != st.session_state.get('llm_token_limit') or
+                new_max_context_chars != st.session_state.get('max_context_chars') or
+                new_max_chunks != st.session_state.get('max_chunks') or
+                new_chunk_size != st.session_state.get('chunk_size') or
+                new_chunk_overlap != st.session_state.get('chunk_overlap')):
+                
+                st.session_state.token_limit = new_token_limit
+                st.session_state.llm_token_limit = new_llm_token_limit
+                st.session_state.max_context_chars = new_max_context_chars
+                st.session_state.max_chunks = new_max_chunks
+                st.session_state.chunk_size = new_chunk_size
+                st.session_state.chunk_overlap = new_chunk_overlap
+                
+                # Clear processed files to force reprocessing with new limits
+                st.session_state.last_processed_files = None
+                if 'retriever_data' in st.session_state:
+                    del st.session_state.retriever_data
+                
+                st.info("🔄 Settings updated! Please re-upload files to apply new configuration.")
+            
+            # Display current settings
+            st.info(f"""
+            **Current Settings:**
+            - Chunking Limit: {st.session_state.get('token_limit', DEFAULT_TOKEN_LIMIT):,} tokens
+            - LLM Limit: {st.session_state.get('llm_token_limit', DEFAULT_LLM_TOKEN_LIMIT):,} tokens
+            - Chunk Size: {st.session_state.get('chunk_size', DEFAULT_CHUNK_SIZE)} chars
+            - Chunk Overlap: {st.session_state.get('chunk_overlap', DEFAULT_CHUNK_OVERLAP)} chars
+            - Max Context: {st.session_state.get('max_context_chars', DEFAULT_MAX_CONTEXT_CHARS):,} chars
+            - Max Chunks: {st.session_state.get('max_chunks', DEFAULT_MAX_CHUNKS)}
+            """)
+
         st.header("📤 Upload Documents")
-        #st.info(f"Chunking Limit: {TOKEN_LIMIT:,} tokens")
-        #st.info(f"LLM Limit: {LLM_TOKEN_LIMIT:,} tokens (semantic search if exceeded)")
         
         uploaded = st.file_uploader(
             "Choose files", accept_multiple_files=True,
@@ -653,7 +814,7 @@ def main():
 
     # Main: query
     st.header("Enter Your Query")
-    query = st.text_input("What would you like to about your documents?", key="query_input")
+    query = st.text_input("What would you like to know about your documents?", key="query_input")
 
     if st.button("Process Query"):
         if not query:
