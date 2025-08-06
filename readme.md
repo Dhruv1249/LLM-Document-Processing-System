@@ -45,7 +45,7 @@ The system is built with an interactive web interface using Streamlit, making it
 | LLM                    | Google Gemini API            |
 | Embeddings             | sentence-transformers        |
 | Vector Search          | In-memory via FAISS-style    |
-| Document Parsing       | unstructured, pdfplumber     |
+| Document Parsing       | unstructured.io              |
 | Query Interface        | Streamlit                    |
 | Chunking & Routing     | LangChain                    |
 | Env Handling           | python-dotenv                |
