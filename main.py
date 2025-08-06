@@ -639,7 +639,7 @@ Return ONLY the JSON object (no extra text, no markdown).
 # --- Streamlit App ---
 def main():
     st.set_page_config(page_title="LLM Document Processing System", layout="wide")
-    st.title("⚙️ LLM Document Processing System")
+    st.title("LLM Document Processing System")
     
     # Initialize session and cleanup
     initialize_session()
@@ -754,7 +754,7 @@ def main():
             - Max Chunks: {st.session_state.get('max_chunks', DEFAULT_MAX_CHUNKS)}
             """)
 
-        st.header("📤 Upload Documents")
+        st.header(" Upload Documents")
         
         uploaded = st.file_uploader(
             "Choose files", accept_multiple_files=True,
