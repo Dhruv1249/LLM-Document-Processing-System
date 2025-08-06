@@ -653,7 +653,7 @@ def main():
 
     # Sidebar: Debug Controls
     with st.sidebar:
-        st.header("🔧 Debug Controls")
+        st.header("🔧 Advanced Controls")
         with st.expander("Token Limits & Chunk Configuration", expanded=False):
             st.subheader("Processing Limits")
             
