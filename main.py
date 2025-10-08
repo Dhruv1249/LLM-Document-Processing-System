@@ -551,7 +551,7 @@ def get_gemini_response(prompt, client):
     """
     Sends a prompt to the Gemini model using the streaming API.
     """
-    model_name = 'learnlm-2.0-flash-experimental'
+    model_name = 'gemini-2.5-flash-lite'
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
     is_json = "Return a single, valid JSON object" in prompt or "Return ONLY the JSON object" in prompt
 
