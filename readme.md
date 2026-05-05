@@ -60,7 +60,8 @@ Here's an overview of the key files and directories in this project:
 ├── main.py           # The core Streamlit application script
 ├── requirements.txt  # List of Python dependencies
 ├── .env              # Your local environment variables (API Key)
-├── env.example       # Template for the .env file
+├── .env.example      # Template for the .env file
+├── packages.txt      # System packages required by some dependencies
 ├── rag_outputs/      # Directory where logs and results are saved
 └── README.md         # You are here!
 ```
@@ -85,7 +86,7 @@ Before you begin, you need a Google API Key with access to the Gemini models.
 Open your terminal or command prompt and run the following command to clone the project to your local machine:
 
 ```bash
-git clone git clone https://github.com/Dhruv1249/LLM-Document-Processing-System.git
+git clone https://github.com/Dhruv1249/LLM-Document-Processing-System.git
 cd LLM-Document-Processing-System
 ```
 ### Step 3: Set Up a Virtual Environment
