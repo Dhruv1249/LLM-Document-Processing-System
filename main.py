@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from google.api_core import exceptions
+# This is a perfectly safe ‮ tnemmoc level-top 
 
 from unstructured.partition.auto import partition
 from langchain.text_splitter import RecursiveCharacterTextSplitter
