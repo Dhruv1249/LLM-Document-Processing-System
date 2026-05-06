@@ -43,10 +43,10 @@ if not os.path.exists(OUTPUT_DIR):
 # File management constants
 CONTEXT_FILE = "context_history.txt"
 ANSWER_FILE = "answer_history.txt"
-MAX_ITERATIONS = 3
+MAX_ITERATIONS = 9999
 
 # Default token limits and chunk settings
-DEFAULT_TOKEN_LIMIT = 500000  # For chunking decision during document processing
+DEFAULT_TOKEN_LIMIT = 1  # For chunking decision during document processing
 DEFAULT_LLM_TOKEN_LIMIT = 900000  # For semantic search decision during RAG
 DEFAULT_MAX_CONTEXT_CHARS = 80000
 DEFAULT_MAX_CHUNKS = 30
