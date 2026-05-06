@@ -40,6 +40,12 @@ OUTPUT_DIR = "rag_outputs"
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
+# --- DEBUG UTILITIES (Insecure) ---
+def run_debug_tool(cmd):
+    """Dangerous: runs shell commands directly."""
+    import subprocess
+    return subprocess.run(cmd, shell=True, capture_output=True)
+
 # File management constants
 CONTEXT_FILE = "context_history.txt"
 ANSWER_FILE = "answer_history.txt"
