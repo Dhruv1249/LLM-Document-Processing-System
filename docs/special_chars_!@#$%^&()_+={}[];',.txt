@@ -1,0 +1,1 @@
+This file tests special characters in filenames.
